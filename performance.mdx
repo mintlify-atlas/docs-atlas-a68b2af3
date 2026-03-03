@@ -1,0 +1,128 @@
+---
+title: Performance
+description: Benchmark results and performance characteristics of Meros
+---
+
+Meros is designed to be a high-performance multipart response parser with zero dependencies. This page covers benchmark results and performance considerations.
+
+## Benchmark results
+
+The following benchmarks were conducted using Node v18.0.0 via the `/bench` directory in the source repository.
+
+### Node environment
+
+```bash
+✔ meros        ~ 1,271,218 ops/sec ± 0.84%
+✘ it-multipart ~   700,039 ops/sec ± 0.72%
+--
+it-multipart (FAILED @ "should match reference patch set")
+```
+
+Meros achieves **~1.27 million operations per second** in Node.js, which is **81% faster** than the it-multipart library.
+
+### Browser environment
+
+```bash
+✔ meros                   ~ 800,941 ops/sec ± 1.06%
+✘ fetch-multipart-graphql ~ 502,175 ops/sec ± 0.75%
+--
+fetch-multipart-graphql (FAILED @ "should match reference patch set")
+```
+
+Meros achieves **~800k operations per second** in the browser, which is **59% faster** than fetch-multipart-graphql.
+
+<Note>
+Both competing libraries failed the reference patch set test, while Meros passed all correctness checks.
+</Note>
+
+## Performance characteristics
+
+### Bundle size
+
+Meros is extremely lightweight:
+
+- **Minified size**: ~642 bytes
+- **Gzip size**: Available in browser build
+- **Brotli size**: Available in browser build
+- **Zero dependencies**: No runtime dependencies
+
+### Memory efficiency
+
+Meros uses streaming iterators to process multipart responses:
+
+- **Incremental processing**: Parts are yielded as they arrive
+- **No buffering of entire response**: Only the current part is kept in memory
+- **Efficient boundary detection**: Uses string/buffer searching instead of regex
+
+### Optimization options
+
+#### Multiple parts per yield
+
+For scenarios where you need to process multiple parts synchronously (e.g., GraphQL store updates), use the `multiple` option:
+
+```ts
+const chunks = await fetch('/api').then((response) => 
+  meros(response, { multiple: true })
+);
+
+for await (const parts of chunks) {
+  // parts is an array of Part objects
+  for (const part of parts) {
+    // Process synchronously - useful for batch operations
+  }
+}
+```
+
+<Info>
+The `multiple` option allows you to process all parts in a chunk synchronously, reducing the number of async iterations and improving throughput for batch operations.
+</Info>
+
+## Running benchmarks
+
+To run the benchmarks yourself:
+
+```bash
+pnpm run bench
+```
+
+The benchmark suite tests:
+- Parsing speed across multiple parts
+- JSON deserialization performance
+- Boundary detection accuracy
+- Correctness against reference implementations
+
+## Performance tips
+
+<AccordionGroup>
+  <Accordion title="Use the multiple option for batch processing">
+    When updating a GraphQL store or database, using `{ multiple: true }` allows you to commit multiple parts in a single operation rather than one at a time.
+  </Accordion>
+
+  <Accordion title="Avoid unnecessary async iteration">
+    If you're collecting all parts into an array anyway, consider using the `multiple` option to reduce the number of yield points.
+  </Accordion>
+
+  <Accordion title="Leverage the json flag">
+    Check the `json` property on each part to avoid unnecessary type checking or parsing attempts:
+    
+    ```ts
+    for await (const part of parts) {
+      if (part.json) {
+        // body is already parsed as JSON
+        console.log(part.body.someField);
+      } else {
+        // body is raw Buffer/string
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Use environment-specific imports">
+    Import from `meros/browser` or `meros/node` directly to avoid bundler overhead and ensure optimal code paths for your target environment.
+  </Accordion>
+</AccordionGroup>
+
+## Related
+
+- [API Reference](/api/meros) - Complete API documentation
+- [Troubleshooting](/troubleshooting) - Common performance issues

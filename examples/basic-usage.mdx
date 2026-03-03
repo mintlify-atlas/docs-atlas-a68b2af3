@@ -1,0 +1,164 @@
+---
+title: Basic usage
+description: Learn how to use Meros to consume multipart responses with simple async iteration
+---
+
+Meros makes it simple to consume multipart responses from your server. This guide shows you the fundamental patterns for both client and server implementations.
+
+## Quick start
+
+The most basic usage involves fetching a multipart response and iterating over the parts:
+
+```ts
+import { meros } from 'meros';
+
+const parts = await fetch('/api').then(meros);
+
+// Iterate over each part as it arrives
+for await (const part of parts) {
+  // Do something with this part
+}
+```
+
+## Complete example
+
+<Steps>
+  <Step title="Set up the client">
+    On the client side, fetch the multipart endpoint and use `meros` to parse the response:
+
+    ```ts client.ts
+    import { meros } from 'meros';
+
+    async function run() {
+      const app = document.querySelector('#app');
+
+      const parts = await fetch('/data').then((r) =>
+        meros<{ letter: string }>(r),
+      );
+
+      for await (let part of parts) {
+        const el = document.createElement('div');
+        el.innerText = part.body.letter;
+        app.appendChild(el);
+      }
+    }
+
+    if (document.readyState !== 'complete') run();
+    else window.addEventListener('load', run);
+    ```
+
+    <Note>
+      The generic type parameter `<{ letter: string }>` tells Meros what shape to expect for JSON parts.
+    </Note>
+  </Step>
+
+  <Step title="Create the server endpoint">
+    On the server, use a library like [Piecemeal](https://github.com/maraisr/piecemeal) to stream multipart responses:
+
+    ```ts server.ts
+    import polka from 'polka';
+    import * as Piecemeal from 'piecemeal/node';
+
+    const app = polka();
+
+    async function* alphabet() {
+      for (let letter = 65; letter <= 90; letter++) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        yield { letter: String.fromCharCode(letter) };
+      }
+    }
+
+    app.add('GET', '/data', async (_req, res) => {
+      const stream = Piecemeal.stream(alphabet());
+      await stream.pipe(res);
+    });
+
+    app.listen(8080);
+    ```
+
+    <Tip>
+      The async generator pattern `async function*` makes it easy to stream data over time.
+    </Tip>
+  </Step>
+
+  <Step title="Handle each part">
+    Each part in the response gives you access to:
+
+    - `json: boolean` - Indicates whether the body is a parsed JavaScript object
+    - `headers: object` - Key-value pairs of headers from this part
+    - `body: T | string | Buffer` - The part's body, either as a typed object or raw data
+
+    ```ts
+    for await (const part of parts) {
+      if (part.json) {
+        console.log('JSON data:', part.body);
+      } else {
+        console.log('Raw data:', part.body);
+      }
+      console.log('Headers:', part.headers);
+    }
+    ```
+  </Step>
+</Steps>
+
+## Environment-specific imports
+
+Meros automatically detects your environment, but you can import environment-specific builds:
+
+<CodeGroup>
+  ```ts Browser
+  import { meros } from 'meros/browser';
+
+  const parts = await fetch('/api').then(meros);
+  ```
+
+  ```ts Node
+  import http from 'http';
+  import { meros } from 'meros/node';
+
+  const response = await new Promise((resolve) => {
+    const request = http.get(`http://example.com/api`, (response) => {
+      resolve(response);
+    });
+    request.end();
+  });
+
+  const parts = await meros(response);
+  ```
+</CodeGroup>
+
+## Handling non-multipart responses
+
+Meros gracefully handles non-multipart responses by returning the original response:
+
+```ts
+import { meros } from 'meros';
+
+const response = await fetch('/api');
+const parts = await meros(response);
+
+if (parts[Symbol.asyncIterator]) {
+  // Response is multipart
+  for await (const part of parts) {
+    // Process each part
+  }
+} else {
+  // Response is not multipart
+  const data = await parts.json();
+}
+```
+
+<Tip>
+  This makes Meros ideal for middleware where you don't always know if a response will be multipart.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="GraphQL integration" icon="diagram-project" href="/examples/graphql-integration">
+    Use Meros with GraphQL @defer and @stream directives
+  </Card>
+  <Card title="RxJS integration" icon="arrows-spin" href="/examples/rxjs-integration">
+    Integrate Meros with reactive RxJS streams
+  </Card>
+</CardGroup>

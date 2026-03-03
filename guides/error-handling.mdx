@@ -1,0 +1,315 @@
+---
+title: Error handling
+description: Learn best practices for handling non-multipart responses and errors when using Meros
+---
+
+Meros is designed to gracefully handle both multipart and non-multipart responses. Understanding how to properly check response types is crucial for robust applications.
+
+## Non-multipart responses
+
+Meros returns the original response object when the content is not multipart:
+
+<Note>
+If the `content-type` header does not contain `multipart/`, Meros will resolve with the original response argument unchanged.
+</Note>
+
+## Checking for multipart
+
+The safest way to handle responses is to check if you received an async iterator:
+
+<Tabs>
+  <Tab title="Browser">
+    ```typescript
+    import { meros } from 'meros/browser';
+
+    const response = await fetch('/api');
+    const parts = await meros(response);
+
+    if (parts[Symbol.asyncIterator]) {
+      // Multipart response - safe to iterate
+      for await (const part of parts) {
+        console.log(part.body);
+      }
+    } else {
+      // Regular response - handle normally
+      const data = await parts.json();
+      console.log(data);
+    }
+    ```
+  </Tab>
+  
+  <Tab title="Node.js">
+    ```typescript
+    import { meros } from 'meros/node';
+    import type { IncomingMessage } from 'node:http';
+
+    const result = await meros(response);
+
+    if (!(result instanceof IncomingMessage)) {
+      // Multipart response - safe to iterate
+      for await (const part of result) {
+        console.log(part.body);
+      }
+    } else {
+      // Regular response - handle as IncomingMessage
+      let data = '';
+      result.on('data', chunk => data += chunk);
+      result.on('end', () => console.log(data));
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Type guard pattern
+
+Create a type guard for cleaner code:
+
+```typescript
+import { meros } from 'meros';
+
+function isMultipart<T>(result: any): result is AsyncGenerator<Part<T>> {
+  return result[Symbol.asyncIterator] !== undefined;
+}
+
+const response = await fetch('/api');
+const parts = await meros<Message>(response);
+
+if (isMultipart(parts)) {
+  // TypeScript knows parts is an AsyncGenerator
+  for await (const part of parts) {
+    if (part.json) {
+      console.log(part.body);
+    }
+  }
+} else {
+  // TypeScript knows parts is Response
+  const data = await parts.json();
+}
+```
+
+## Browser-specific validations
+
+The browser implementation performs several checks before processing:
+
+<Steps>
+  <Step title="Response status check">
+    ```typescript
+    if (!response.ok || !response.body || response.bodyUsed) {
+      return response;
+    }
+    ```
+    
+    Returns the original response if:
+    - Status is not 200-299 (`!response.ok`)
+    - No body exists (`!response.body`)
+    - Body already consumed (`response.bodyUsed`)
+  </Step>
+  
+  <Step title="Content-Type check">
+    ```typescript
+    let ctype = response.headers.get('content-type');
+    if (!ctype || !~ctype.indexOf('multipart/')) {
+      return response;
+    }
+    ```
+    
+    Returns the original response if content-type doesn't contain `multipart/`
+  </Step>
+  
+  <Step title="Boundary extraction">
+    Extracts and validates the boundary parameter from the content-type header
+  </Step>
+</Steps>
+
+## Handling JSON parsing errors
+
+Meros attempts to parse JSON when `content-type: application/json` is present, but fails gracefully:
+
+```typescript
+if (tmp && !!~tmp.indexOf('application/json')) {
+  try {
+    body = JSON.parse(body) as T;
+    is_json = true;
+  } catch (_) {
+    // Parsing failed - body remains as string/Buffer
+  }
+}
+```
+
+<Warning>
+Always check the `json` property before accessing parsed data:
+</Warning>
+
+```typescript
+for await (const part of parts) {
+  if (part.json) {
+    // Safe - body is parsed object
+    console.log(part.body.id);
+  } else {
+    // body is raw string or Buffer
+    console.log('Raw data:', part.body);
+  }
+}
+```
+
+## Middleware pattern
+
+Meros works well as middleware since it passes through non-multipart responses:
+
+```typescript
+async function multipartMiddleware(response: Response) {
+  const parts = await meros(response);
+  
+  // Pass through if not multipart
+  if (parts instanceof Response) {
+    return parts;
+  }
+  
+  // Process multipart
+  const results = [];
+  for await (const part of parts) {
+    results.push(part.body);
+  }
+  return results;
+}
+
+// Works with both multipart and regular responses
+const result1 = await fetch('/multipart').then(multipartMiddleware);
+const result2 = await fetch('/regular').then(multipartMiddleware);
+```
+
+## Network error handling
+
+Wrap Meros calls in try-catch for network errors:
+
+```typescript
+try {
+  const response = await fetch('/api');
+  const parts = await meros(response);
+  
+  if (parts[Symbol.asyncIterator]) {
+    for await (const part of parts) {
+      // Process parts
+    }
+  } else {
+    // Handle non-multipart
+  }
+} catch (error) {
+  console.error('Network or parsing error:', error);
+  // Handle error appropriately
+}
+```
+
+## Stream interruption
+
+Handle incomplete streams with finally blocks:
+
+```typescript
+const parts = await fetch('/api').then(meros);
+
+if (parts[Symbol.asyncIterator]) {
+  try {
+    for await (const part of parts) {
+      console.log(part.body);
+    }
+  } catch (error) {
+    console.error('Stream interrupted:', error);
+  } finally {
+    console.log('Stream processing complete or interrupted');
+  }
+}
+```
+
+## Boundary detection failures
+
+If the boundary parameter is missing or malformed, Meros uses a default:
+
+```typescript
+let boundary = '-';
+if (!!~idx_boundary) {
+  // Extract boundary from content-type
+  boundary = ctype
+    .slice(idx_boundary_len, eo_boundary > -1 ? eo_boundary : undefined)
+    .trim()
+    .replace(/"/g, '');
+}
+```
+
+<Note>
+Meros will still attempt to parse with the boundary `--` if extraction fails, though this may not yield expected results.
+</Note>
+
+## Complete error handling example
+
+```typescript
+import { meros } from 'meros';
+import type { Part } from 'meros';
+
+interface ApiResponse {
+  id: string;
+  data: any;
+}
+
+async function fetchWithErrorHandling(url: string) {
+  try {
+    const response = await fetch(url);
+    
+    // Check HTTP status
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const parts = await meros<ApiResponse>(response);
+    
+    // Check if multipart
+    if (!parts[Symbol.asyncIterator]) {
+      // Not multipart - parse as regular JSON
+      return [await parts.json()];
+    }
+    
+    // Process multipart response
+    const results: ApiResponse[] = [];
+    
+    try {
+      for await (const part of parts) {
+        if (part.json) {
+          results.push(part.body as ApiResponse);
+        } else {
+          console.warn('Non-JSON part received:', part.headers);
+        }
+      }
+    } catch (streamError) {
+      console.error('Stream processing error:', streamError);
+      // Return partial results
+      return results;
+    }
+    
+    return results;
+    
+  } catch (error) {
+    console.error('Fetch error:', error);
+    throw error;
+  }
+}
+
+// Usage
+const data = await fetchWithErrorHandling('/api/data');
+console.log(`Received ${data.length} items`);
+```
+
+## Best practices
+
+<Warning>
+**Always validate before iterating:**
+- Check for `Symbol.asyncIterator` in browser code
+- Use `instanceof` checks in Node.js code
+- Never assume a response is multipart
+</Warning>
+
+<Note>
+**Handle partial data gracefully:**
+- Streams can be interrupted
+- JSON parsing can fail
+- Network errors can occur mid-stream
+- Use try-catch-finally appropriately
+</Note>

@@ -1,0 +1,236 @@
+---
+title: Multiple mode
+description: Learn how to use Meros's multiple mode to process batches of parts for improved performance
+---
+
+The `multiple` option changes Meros's yielding behavior to return arrays of parts instead of individual parts, enabling synchronous batch processing.
+
+## Why use multiple mode?
+
+Multiple mode is an optimization technique useful when you want to process all available parts in a chunk synchronously, rather than yielding once per part.
+
+<Note>
+This is particularly valuable for technologies like GraphQL where you can commit multiple payloads to the store in a single synchronous operation instead of across multiple process ticks.
+</Note>
+
+## Basic usage
+
+Enable multiple mode by setting `options.multiple` to `true`:
+
+```typescript
+const chunks = await fetch('/api').then((response) => 
+  meros(response, { multiple: true })
+);
+
+for await (const parts of chunks) {
+  // parts is an array of Part objects
+  for (const part of parts) {
+    // Process each part in the batch
+  }
+}
+```
+
+## Single mode vs. Multiple mode
+
+<CodeGroup>
+```typescript Single mode (default)
+const parts = await fetch('/api').then(meros);
+
+// Yields once per part
+for await (const part of parts) {
+  console.log(part.body); // Individual part
+}
+```
+
+```typescript Multiple mode
+const chunks = await fetch('/api').then((response) =>
+  meros(response, { multiple: true })
+);
+
+// Yields once per chunk with all available parts
+for await (const parts of chunks) {
+  console.log(parts.length); // Array of parts
+  for (const part of parts) {
+    console.log(part.body);
+  }
+}
+```
+</CodeGroup>
+
+## How it works
+
+The internal implementation determines yielding behavior based on the `multiple` option:
+
+```typescript
+let is_eager = !options || !options.multiple;
+
+// Later in the code...
+if (is_eager) {
+  yield tmp;  // Yield individual part immediately
+} else {
+  payloads.push(tmp);  // Accumulate parts
+}
+
+// At chunk boundaries
+if (payloads.length) {
+  yield payloads;  // Yield all accumulated parts
+}
+```
+
+<Steps>
+  <Step title="Chunk arrives">
+    Meros receives a chunk from the stream
+  </Step>
+  
+  <Step title="Parts extracted">
+    All complete parts in the chunk are extracted and parsed
+  </Step>
+  
+  <Step title="Batch yielded">
+    In multiple mode, all parts are yielded together as an array
+  </Step>
+  
+  <Step title="Synchronous processing">
+    Your code can process all parts synchronously before the next tick
+  </Step>
+</Steps>
+
+## GraphQL example
+
+Multiple mode is ideal for GraphQL `@defer` and `@stream` directives:
+
+```typescript
+import { meros } from 'meros';
+
+interface GraphQLResponse {
+  data?: any;
+  errors?: any[];
+  extensions?: any;
+}
+
+const chunks = await fetch('/graphql', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ query: '...' })
+}).then((response) => meros<GraphQLResponse>(response, { multiple: true }));
+
+for await (const parts of chunks) {
+  // Commit all parts to the store synchronously
+  const updates = parts.map(part => {
+    if (part.json) {
+      return part.body.data;
+    }
+  }).filter(Boolean);
+  
+  // Single synchronous store update with all data
+  store.merge(updates);
+}
+```
+
+## Performance benefits
+
+<Tabs>
+  <Tab title="Single mode">
+    ```typescript
+    // Each part triggers a separate async iteration
+    for await (const part of parts) {
+      store.update(part); // Async boundary
+      // Next part waits for next tick
+    }
+    ```
+    
+    - One async iteration per part
+    - Store updates happen across multiple ticks
+    - More async overhead
+  </Tab>
+  
+  <Tab title="Multiple mode">
+    ```typescript
+    // All parts in chunk processed together
+    for await (const parts of chunks) {
+      for (const part of parts) {
+        // Synchronous loop - no async boundary
+      }
+      store.batchUpdate(parts); // Single update
+    }
+    ```
+    
+    - One async iteration per chunk
+    - Synchronous processing within chunk
+    - Batch store updates
+    - Reduced async overhead
+  </Tab>
+</Tabs>
+
+## Aggregation pattern
+
+Multiple mode enables efficient aggregation:
+
+```typescript
+const chunks = await fetch('/api').then((response) =>
+  meros(response, { multiple: true })
+);
+
+for await (const parts of chunks) {
+  // Aggregate data from all parts in the chunk
+  const aggregated = parts.reduce((acc, part) => {
+    if (part.json) {
+      return { ...acc, ...part.body };
+    }
+    return acc;
+  }, {});
+  
+  // Single operation with aggregated data
+  processData(aggregated);
+}
+```
+
+## Choosing the right mode
+
+<Note>
+**Use single mode (default)** when:
+- You want to react to each part immediately
+- You're displaying parts as they arrive
+- Each part is independent
+
+**Use multiple mode** when:
+- You need to batch process parts
+- You're aggregating data across parts
+- You want to minimize async iterations
+- Working with GraphQL deferred queries
+</Note>
+
+## Type differences
+
+```typescript
+import type { Part } from 'meros';
+
+// Single mode
+AsyncGenerator<Part<T>>
+
+// Multiple mode
+AsyncGenerator<Part<T>[]>
+```
+
+<Warning>
+Setting `multiple: true` changes the yielded type from `Part` to `Part[]`. Ensure your code handles arrays appropriately.
+</Warning>
+
+## Browser and Node.js support
+
+Multiple mode works identically in both environments:
+
+<CodeGroup>
+```typescript Browser
+import { meros } from 'meros/browser';
+
+const chunks = await fetch('/api')
+  .then(r => meros(r, { multiple: true }));
+```
+
+```typescript Node.js
+import { meros } from 'meros/node';
+
+const chunks = await meros(response, { multiple: true });
+```
+</CodeGroup>

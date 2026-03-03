@@ -1,0 +1,286 @@
+---
+title: GraphQL @defer and @stream
+description: Using Meros to implement GraphQL incremental delivery with @defer and @stream directives
+---
+
+## What are @defer and @stream?
+
+The `@defer` and `@stream` directives are GraphQL features that enable incremental delivery of query results:
+
+- **@defer**: Defer the delivery of a fragment until after the initial response
+- **@stream**: Stream list items one at a time (or in batches) instead of all at once
+
+These directives reduce time-to-first-byte and improve perceived performance by sending critical data first.
+
+<Info>
+Meros was specifically designed to be the transport layer for GraphQL incremental delivery. Learn more about these directives in the [GraphQL Foundation announcement](https://foundation.graphql.org/news/2020/12/08/improving-latency-with-defer-and-stream-directives/).
+</Info>
+
+## How incremental delivery works
+
+When a GraphQL server receives a query with `@defer` or `@stream`, it responds with:
+
+1. An initial response containing non-deferred data
+2. Subsequent parts containing deferred fragments or streamed items
+3. Each part sent as a multipart/mixed response
+
+### Example query
+
+```graphql
+query {
+  user(id: "123") {
+    id
+    name
+    ... @defer {
+      posts {
+        title
+        content
+      }
+    }
+  }
+}
+```
+
+### Multipart response format
+
+```
+Content-Type: multipart/mixed; boundary="graphql"
+
+--graphql
+Content-Type: application/json
+
+{"data":{"user":{"id":"123","name":"Alice"}}}
+--graphql
+Content-Type: application/json
+
+{"path":["user"],"data":{"posts":[{"title":"Hello","content":"..."}]}}
+--graphql--
+```
+
+## Using Meros with GraphQL
+
+### Basic integration
+
+```typescript
+import { meros } from 'meros';
+
+const response = await fetch('/graphql', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ query, variables })
+});
+
+const parts = await meros(response);
+
+// Process initial and incremental results
+for await (const part of parts) {
+  if (part.json) {
+    console.log('Received data:', part.body);
+  }
+}
+```
+
+<Note>
+Meros automatically detects `Content-Type: application/json` and parses the body for you. The `part.json` flag indicates whether parsing was successful.
+</Note>
+
+### Relay network layer
+
+Meros integrates seamlessly with Relay's network layer:
+
+```typescript
+import { meros } from 'meros';
+import { Network } from 'relay-runtime';
+
+const fetchQuery = async (operation, variables) => {
+  const response = await fetch('/graphql', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      query: operation.text,
+      variables
+    })
+  });
+
+  const parts = await meros(response);
+
+  // Check if multipart
+  if (parts[Symbol.asyncIterator]) {
+    return parts; // Return async iterator
+  } else {
+    return await parts.json(); // Regular response
+  }
+};
+
+const network = Network.create(fetchQuery);
+```
+
+## Optimizing with batch mode
+
+For GraphQL applications, using the `multiple: true` option can significantly improve performance:
+
+```typescript
+const parts = await meros(response, { multiple: true });
+
+for await (const batch of parts) {
+  // batch is an array of parts from the same chunk
+  const updates = batch.map(part => part.body);
+  
+  // Commit all updates to store synchronously
+  commitBatchToStore(updates);
+}
+```
+
+### Why batch mode helps
+
+As mentioned in the Meros README (line 150-154):
+
+> This is an optimization technique for technologies like GraphQL where rather than commit the payload to the store, to be added-to in the next process-tick we can simply do that synchronously.
+
+Benefits:
+- **Reduced store updates**: One commit instead of multiple
+- **Better consistency**: All parts from a chunk applied together
+- **Less overhead**: Fewer async iterations and event loop cycles
+
+<Tip>
+Use batch mode when integrating with state management libraries like Relay, Apollo, or Urql to minimize re-renders and improve performance.
+</Tip>
+
+## Handling incremental patches
+
+GraphQL incremental delivery responses include path information to merge data correctly:
+
+```typescript
+type IncrementalResult = {
+  path: (string | number)[];
+  data: any;
+  errors?: any[];
+};
+
+for await (const part of parts) {
+  if (part.json) {
+    const result = part.body as IncrementalResult;
+    
+    if (result.path) {
+      // This is an incremental patch
+      mergeAtPath(store, result.path, result.data);
+    } else {
+      // This is the initial result
+      store = result.data;
+    }
+  }
+}
+```
+
+### Path-based merging
+
+The `path` array indicates where to merge the incremental data:
+
+```typescript
+function mergeAtPath(obj: any, path: (string | number)[], value: any) {
+  let current = obj;
+  
+  for (let i = 0; i < path.length - 1; i++) {
+    current = current[path[i]];
+  }
+  
+  const lastKey = path[path.length - 1];
+  current[lastKey] = { ...current[lastKey], ...value };
+}
+```
+
+## Error handling
+
+Each part can contain errors alongside data:
+
+```typescript
+for await (const part of parts) {
+  if (!part.json) {
+    console.error('Failed to parse JSON:', part.body);
+    continue;
+  }
+  
+  const result = part.body;
+  
+  if (result.errors) {
+    console.error('GraphQL errors:', result.errors);
+  }
+  
+  if (result.data) {
+    // Process data
+  }
+}
+```
+
+<Warning>
+Meros silently falls back to raw body if JSON parsing fails (browser.ts:69-72). Always check `part.json` before assuming the body is parsed.
+</Warning>
+
+## Complete example
+
+Here's a complete example showing deferred fragments with proper state management:
+
+```typescript
+import { meros } from 'meros';
+
+interface GraphQLResponse {
+  data?: any;
+  errors?: any[];
+  path?: (string | number)[];
+}
+
+async function executeQuery(query: string, variables: any = {}) {
+  const response = await fetch('/graphql', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, variables })
+  });
+
+  const parts = await meros<GraphQLResponse>(response);
+
+  // Handle non-multipart responses
+  if (!parts[Symbol.asyncIterator]) {
+    return [await parts.json()];
+  }
+
+  const results: GraphQLResponse[] = [];
+
+  for await (const part of parts) {
+    if (part.json) {
+      results.push(part.body);
+      
+      // Emit update event for real-time UI
+      if (part.body.path) {
+        console.log('Incremental update at path:', part.body.path);
+      } else {
+        console.log('Initial data received');
+      }
+    }
+  }
+
+  return results;
+}
+
+// Usage
+const query = `
+  query {
+    user(id: "123") {
+      id
+      name
+      ... @defer {
+        posts {
+          id
+          title
+        }
+      }
+    }
+  }
+`;
+
+const results = await executeQuery(query);
+console.log('All results:', results);
+```
+
+<Tip>
+Test your GraphQL incremental delivery implementation using the examples in the [Meros repository's examples directory](https://github.com/maraisr/meros/tree/main/examples).
+</Tip>

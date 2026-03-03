@@ -1,0 +1,171 @@
+---
+title: Migration guide
+description: Guide for migrating between versions of Meros
+---
+
+Meros maintains a stable API across versions. This guide covers any breaking changes and migration steps.
+
+## Current version
+
+The current stable version is **1.3.2**.
+
+<Info>
+Meros follows semantic versioning. Patch and minor version updates are backwards compatible.
+</Info>
+
+## API stability
+
+Meros has maintained a stable API since its initial release. The core API surface is intentionally minimal:
+
+- `meros(response, options?)` - The main function
+- `options.multiple` - The only configuration option
+- `Part<T>` interface - The shape of yielded parts
+
+This minimal API surface makes breaking changes rare and migration straightforward.
+
+## Version history
+
+### 1.3.x (Current)
+
+**Status**: Stable
+
+No breaking changes from 1.2.x. This is a maintenance release with:
+- Dependency updates
+- Build tooling improvements
+- Performance optimizations
+
+### 1.2.x
+
+**Status**: Stable (compatible with 1.3.x)
+
+No migration required from 1.2.x to 1.3.x.
+
+### 1.x Series
+
+The 1.x series has been stable since release. Key features:
+- Browser and Node.js support
+- Zero dependencies
+- Async generator interface
+- Automatic JSON parsing
+- `multiple` option for batch processing
+
+## Migration best practices
+
+### Check for multipart responses
+
+Meros returns the original response if it's not multipart. Always check the return type:
+
+```ts
+const result = await meros(response);
+
+if (result[Symbol.asyncIterator]) {
+  // Handle multipart
+  for await (const part of result) {
+    // Process parts
+  }
+} else {
+  // Handle non-multipart
+  const data = await result.json();
+}
+```
+
+<Note>
+This pattern has been recommended since version 1.0 and continues to be the best practice.
+</Note>
+
+### TypeScript usage
+
+Meros includes TypeScript definitions. Specify your expected body type:
+
+```ts
+import { meros } from 'meros';
+
+interface GraphQLResponse {
+  data?: any;
+  errors?: any[];
+  hasNext?: boolean;
+}
+
+const parts = await meros<GraphQLResponse>(response);
+
+for await (const part of parts) {
+  if (part.json) {
+    // part.body is typed as GraphQLResponse
+    console.log(part.body.data);
+  }
+}
+```
+
+### Environment-specific imports
+
+Use environment-specific imports for better tree-shaking:
+
+```ts
+// Browser
+import { meros } from 'meros/browser';
+
+// Node.js
+import { meros } from 'meros/node';
+
+// Automatic (relies on package.json exports)
+import { meros } from 'meros';
+```
+
+## Breaking changes
+
+<Warning>
+No breaking changes have been introduced since the 1.x stable release.
+</Warning>
+
+## Upgrading from 0.x (if applicable)
+
+If you're upgrading from a pre-1.0 version, the main change was the stabilization of the async generator API.
+
+### Before (0.x)
+
+The API may have returned promises directly or used callbacks.
+
+### After (1.x)
+
+```ts
+const parts = await meros(response);
+
+for await (const part of parts) {
+  console.log(part.body);
+}
+```
+
+## Future compatibility
+
+Meros is committed to maintaining API stability. Any future breaking changes will:
+
+1. Be clearly documented
+2. Follow semantic versioning (major version bump)
+3. Include a migration guide
+4. Provide deprecation warnings when possible
+
+## Feature requests and RFC
+
+Meros aims to implement [RFC 1341](https://tools.ietf.org/html/rfc1341) in its entirety. Current limitations:
+
+- No support for `/alternative`, `/digest`, or `/parallel` subtypes
+- No support for nested multiparts
+
+These features may be added in future versions if there is demand. If you need these features, please open an issue on GitHub.
+
+## Changelog
+
+For detailed changes between versions, see the commit history and release notes on the [GitHub repository](https://github.com/maraisr/meros).
+
+## Getting help with migration
+
+If you encounter issues during migration:
+
+1. Review the [API Reference](/api/meros)
+2. Check the [Troubleshooting](/troubleshooting) guide
+3. Search [GitHub issues](https://github.com/maraisr/meros/issues)
+4. Open a new issue with details about your migration scenario
+
+<Info>
+Because Meros maintains a stable API, most upgrades should be as simple as updating the version number in your package.json.
+</Info>

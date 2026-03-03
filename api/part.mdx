@@ -1,0 +1,217 @@
+---
+title: Part
+description: The structure of each multipart segment
+---
+
+The `Part` type represents a single part from a multipart response. Each part contains headers, a body, and metadata about the content type.
+
+## Type definition
+
+```typescript
+export type Part<Body, Fallback> =
+  | { json: false; headers: Record<string, string>; body: Fallback }
+  | { json: true; headers: Record<string, string>; body: Body };
+```
+
+This is a discriminated union type where the `json` property determines the type of `body`.
+
+## Properties
+
+<ResponseField name="json" type="boolean" required>
+  Indicates whether the part's body was successfully parsed as JSON.
+  
+  - `true`: The body is a JavaScript object (type `Body`)
+  - `false`: The body is raw data (type `Fallback`)
+  
+  Meros automatically attempts to parse parts with `content-type: application/json`. If parsing succeeds, `json` is set to `true`.
+</ResponseField>
+
+<ResponseField name="headers" type="Record<string, string>" required>
+  A key-value object containing all HTTP headers from this part.
+  
+  Header names are normalized to lowercase.
+  
+  Common headers include:
+  - `content-type`: The MIME type of the part
+  - `content-length`: Size of the part body
+  - Custom headers specific to your application
+</ResponseField>
+
+<ResponseField name="body" type="Body | Fallback" required>
+  The content of the part. The type depends on the `json` property and the environment:
+  
+  **When `json: true`:**
+  - Type: `Body` (the generic type parameter)
+  - The parsed JavaScript object
+  
+  **When `json: false`:**
+  - Browser: `string`
+  - Node.js: `Buffer`
+</ResponseField>
+
+## Environment-specific types
+
+### Browser
+
+```typescript
+Part<T, string>
+```
+
+In browsers, the fallback type for non-JSON parts is `string`.
+
+### Node.js
+
+```typescript
+Part<T, Buffer>
+```
+
+In Node.js, the fallback type for non-JSON parts is `Buffer`.
+
+## Usage
+
+### Basic usage with type checking
+
+```typescript
+import { meros } from 'meros';
+
+const parts = await fetch('/api').then(meros);
+
+for await (const part of parts) {
+  if (part.json) {
+    // part.body is a JavaScript object
+    console.log('Parsed JSON:', part.body);
+  } else {
+    // part.body is a string (browser) or Buffer (Node.js)
+    console.log('Raw data:', part.body);
+  }
+}
+```
+
+### With TypeScript generics
+
+```typescript
+interface ApiResponse {
+  id: number;
+  message: string;
+}
+
+const parts = await fetch('/api').then(meros<ApiResponse>);
+
+for await (const part of parts) {
+  if (part.json) {
+    // TypeScript knows part.body is ApiResponse
+    console.log(part.body.message);
+  }
+}
+```
+
+### Accessing headers
+
+```typescript
+for await (const part of parts) {
+  console.log('Content-Type:', part.headers['content-type']);
+  console.log('Custom Header:', part.headers['x-custom-header']);
+  
+  console.log('All headers:', part.headers);
+}
+```
+
+### Node.js Buffer handling
+
+```typescript
+import { meros } from 'meros/node';
+
+const parts = await meros(response);
+
+for await (const part of parts) {
+  if (!part.json) {
+    // part.body is a Buffer in Node.js
+    const text = part.body.toString('utf-8');
+    console.log('Decoded text:', text);
+  }
+}
+```
+
+### Multiple mode
+
+```typescript
+const chunks = await fetch('/api').then((response) => 
+  meros(response, { multiple: true })
+);
+
+for await (const parts of chunks) {
+  // parts is an array of Part objects
+  for (const part of parts) {
+    console.log(part.json, part.headers, part.body);
+  }
+}
+```
+
+## Type narrowing
+
+TypeScript's discriminated union support allows for automatic type narrowing:
+
+```typescript
+type User = { name: string };
+
+const parts = await fetch('/api').then(meros<User>);
+
+for await (const part of parts) {
+  if (part.json) {
+    // ✅ TypeScript knows: part.body is User
+    console.log(part.body.name);
+  } else {
+    // ✅ TypeScript knows: part.body is string (browser) or Buffer (node)
+    console.log(part.body);
+  }
+}
+```
+
+## Examples
+
+### Processing mixed content types
+
+```typescript
+for await (const part of parts) {
+  const contentType = part.headers['content-type'];
+  
+  if (part.json) {
+    // Handle JSON
+    await saveToDatabase(part.body);
+  } else if (contentType?.includes('image/')) {
+    // Handle image data
+    await saveImage(part.body);
+  } else {
+    // Handle other data
+    console.log('Unknown content:', part.body);
+  }
+}
+```
+
+### GraphQL incremental delivery
+
+```typescript
+interface GraphQLResponse {
+  data?: any;
+  errors?: any[];
+  path?: string[];
+  hasNext?: boolean;
+}
+
+const parts = await fetch('/graphql', {
+  method: 'POST',
+  body: JSON.stringify({ query }),
+}).then(meros<GraphQLResponse>);
+
+for await (const part of parts) {
+  if (part.json) {
+    if (part.body.data) {
+      // Merge incremental data into store
+      store.merge(part.body.path, part.body.data);
+    }
+    if (part.body.errors) {
+      console.error('GraphQL errors:', part.body.errors);
+    }
+  }
+}
+```

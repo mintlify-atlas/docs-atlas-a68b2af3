@@ -1,0 +1,278 @@
+---
+title: Troubleshooting
+description: Common issues and solutions when using Meros
+---
+
+This guide covers common issues you might encounter when using Meros and how to resolve them.
+
+## Common issues
+
+### Response is returned instead of AsyncGenerator
+
+#### Symptom
+
+When you call `meros(response)`, you get back the original response object instead of an async generator.
+
+```ts
+const parts = await meros(response);
+// parts is the Response object, not an AsyncGenerator
+```
+
+#### Cause
+
+Meros only processes responses with a `multipart/` content type. If the response is not multipart, Meros returns the original response object unchanged.
+
+#### Solution
+
+Check if the response is actually multipart before iterating:
+
+```ts
+import { meros } from 'meros';
+
+const response = await fetch('/api');
+const parts = await meros(response);
+
+if (parts[Symbol.asyncIterator]) {
+  // It's multipart - iterate over parts
+  for await (const part of parts) {
+    console.log(part.body);
+  }
+} else {
+  // Not multipart - handle as regular response
+  const data = await parts.json();
+}
+```
+
+<Note>
+This behavior is intentional and allows Meros to work as middleware that gracefully handles both multipart and non-multipart responses.
+</Note>
+
+### Boundary not detected
+
+#### Symptom
+
+The async generator doesn't yield any parts, or yields incomplete data.
+
+#### Cause
+
+The boundary parameter may be missing or incorrect in the `Content-Type` header.
+
+#### Solution
+
+Ensure your server sends a proper `Content-Type` header:
+
+```
+Content-Type: multipart/mixed; boundary=gc0p4Jq0M2Yt08jU534c0p
+```
+
+<Warning>
+If no boundary is specified in the Content-Type header, Meros defaults to using `-` as the boundary, which may not match your actual data.
+</Warning>
+
+You can verify the content type:
+
+```ts
+const response = await fetch('/api');
+console.log(response.headers.get('content-type'));
+// Should be: multipart/mixed; boundary=...
+```
+
+### JSON parsing fails silently
+
+#### Symptom
+
+Parts that should contain JSON have `json: false` and `body` is a string/Buffer.
+
+#### Cause
+
+The part doesn't have a `Content-Type: application/json` header, or the JSON is malformed.
+
+#### Solution
+
+Ensure each multipart part includes the correct content type header:
+
+```
+--boundary
+Content-Type: application/json
+
+{"data": "value"}
+--boundary--
+```
+
+Meros only attempts JSON parsing when:
+1. The part has a `Content-Type` header
+2. The content type includes `application/json`
+3. The JSON is valid
+
+```ts
+for await (const part of parts) {
+  if (part.json) {
+    // Successfully parsed as JSON
+    console.log(part.body.data);
+  } else {
+    // Not JSON or parsing failed
+    console.log('Raw body:', String(part.body));
+  }
+}
+```
+
+### Body is already consumed
+
+#### Symptom (Browser only)
+
+Error: "body stream already read" or Meros returns the response unchanged.
+
+#### Cause
+
+The response body can only be read once. If you've already called `.json()`, `.text()`, or iterated over the body, it cannot be read again.
+
+#### Solution
+
+Pass the response directly to Meros without reading it first:
+
+```ts
+// ❌ Wrong - body already consumed
+const text = await response.text();
+const parts = await meros(response); // Won't work
+
+// ✅ Correct - pass response directly
+const parts = await fetch('/api').then(meros);
+```
+
+<Info>
+Meros checks `response.bodyUsed` in the browser and will return the response unchanged if the body has already been consumed.
+</Info>
+
+### UTF-8 characters are corrupted
+
+#### Symptom
+
+Emoji or special characters appear as � or corrupted text.
+
+#### Cause
+
+Multibyte UTF-8 characters may be split across chunk boundaries during streaming.
+
+#### Solution
+
+Meros handles this automatically! The browser implementation uses `TextDecoder` with `{ stream: true }`, which properly handles UTF-8 characters split across chunks.
+
+If you're seeing corruption, verify:
+1. Your server is sending UTF-8 encoded data
+2. Your server includes proper charset in Content-Type: `Content-Type: application/json; charset=utf-8`
+
+### Preamble or epilogue appears in parts
+
+#### Symptom
+
+Text before the first boundary or after the final boundary appears as a part.
+
+#### Solution
+
+This should not happen - Meros is designed to ignore preamble (content before first boundary) and epilogue (content after final boundary).
+
+The final boundary must end with `--`:
+
+```
+--boundary
+Content-Type: application/json
+
+{"part": 1}
+--boundary--
+       ^^^ These dashes indicate the end
+```
+
+If you're seeing preamble/epilogue in results, please report this as a bug.
+
+## Browser-specific issues
+
+### Module not found: 'meros'
+
+#### Solution
+
+Use the environment-specific import:
+
+```ts
+import { meros } from 'meros/browser';
+```
+
+Or rely on bundler detection with the default import:
+
+```ts
+import { meros } from 'meros';
+```
+
+### ReadableStream is not defined
+
+#### Cause
+
+Your environment doesn't support ReadableStream (very old browsers).
+
+#### Solution
+
+Meros requires modern browser APIs. Ensure your target browsers support:
+- `ReadableStream`
+- `TextDecoder`
+- Async iterators
+
+For browser compatibility, see [caniuse.com/streams](https://caniuse.com/streams).
+
+## Node-specific issues
+
+### IncomingMessage is not supported
+
+#### Cause
+
+You're using the browser version of Meros in Node.js.
+
+#### Solution
+
+Use the Node-specific import:
+
+```ts
+import { meros } from 'meros/node';
+import http from 'http';
+
+const response = await new Promise((resolve) => {
+  const request = http.get('http://example.com/api', resolve);
+  request.end();
+});
+
+const parts = await meros(response);
+```
+
+### Buffer vs string confusion
+
+#### Issue
+
+In Node.js, non-JSON bodies are `Buffer` objects, not strings.
+
+#### Solution
+
+Convert to string explicitly:
+
+```ts
+for await (const part of parts) {
+  if (part.json) {
+    console.log(part.body); // Already an object
+  } else {
+    console.log(String(part.body)); // Convert Buffer to string
+  }
+}
+```
+
+## Getting help
+
+If you encounter an issue not covered here:
+
+1. Check the [API Reference](/api/meros) for correct usage
+2. Review the [examples](https://github.com/maraisr/meros/tree/main/examples) in the GitHub repository
+3. Search [existing issues](https://github.com/maraisr/meros/issues) on GitHub
+4. Open a new issue with a minimal reproduction
+
+<Note>
+When reporting issues, include:
+- Your environment (browser/Node version)
+- The Content-Type header from your response
+- A minimal code example that reproduces the issue
+</Note>

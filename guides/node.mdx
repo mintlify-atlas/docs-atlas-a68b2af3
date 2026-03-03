@@ -1,0 +1,232 @@
+---
+title: Node.js usage
+description: Learn how to use Meros in Node.js environments to handle multipart responses from HTTP requests
+---
+
+Meros provides a dedicated Node.js implementation optimized for working with `IncomingMessage` objects from the `http` and `https` modules.
+
+## Installation
+
+Import the Node.js-specific implementation:
+
+```typescript
+import { meros } from 'meros/node';
+```
+
+## Basic usage with http module
+
+The Node.js implementation works with the native `http` and `https` modules:
+
+```typescript
+import http from 'http';
+import { meros } from 'meros/node';
+
+const response = await new Promise((resolve) => {
+  const request = http.get(`http://example.com/api`, (response) => {
+    resolve(response);
+  });
+  request.end();
+});
+
+const parts = await meros(response);
+```
+
+## Working with IncomingMessage
+
+The Node.js implementation accepts `IncomingMessage` from the `node:http` module:
+
+```typescript
+import type { IncomingMessage } from 'node:http';
+import { meros } from 'meros/node';
+
+interface Result {
+  name: string;
+}
+
+declare const responseNode: IncomingMessage;
+const result = await meros<Result>(responseNode);
+
+if (!(result instanceof IncomingMessage)) {
+  for await (let item of result) {
+    if (item.json) {
+      // item.body is typed as Result
+      console.log(item.body.name);
+    } else {
+      // item.body is a Buffer
+      console.log(item.body.toString());
+    }
+  }
+}
+```
+
+## Response validation
+
+The Node.js implementation validates the response before processing:
+
+<Steps>
+  <Step title="Check content type">
+    Verifies the `content-type` header contains `multipart/`
+  </Step>
+  
+  <Step title="Extract boundary">
+    Parses the boundary parameter from the content-type header
+  </Step>
+  
+  <Step title="Return appropriate type">
+    Returns an `AsyncGenerator` for multipart responses, or the original `IncomingMessage` otherwise
+  </Step>
+</Steps>
+
+<Note>
+If the content-type is not multipart, Meros returns the original `IncomingMessage` unchanged.
+</Note>
+
+## Working with parts
+
+Each part yielded from the async generator provides:
+
+```typescript
+interface Part<T, Buffer> {
+  json: boolean;        // true if body is parsed JSON
+  headers: Record<string, string>;  // Part-specific headers
+  body: T | Buffer;     // Parsed object or Buffer
+}
+```
+
+### Buffer handling
+
+Unlike the browser implementation which returns strings, the Node.js version returns `Buffer` objects:
+
+```typescript
+for await (const part of parts) {
+  if (part.json) {
+    // body is a parsed JavaScript object
+    console.log(part.body);
+  } else {
+    // body is a Buffer - convert as needed
+    const text = part.body.toString('utf8');
+    console.log(text);
+  }
+}
+```
+
+## Streaming implementation details
+
+The Node.js implementation uses efficient Buffer operations:
+
+<CodeGroup>
+```typescript Chunk processing
+for await (let chunk of stream) {
+  idx_boundary = buffer.byteLength;
+  buffer = Buffer.concat([buffer, chunk]);
+  
+  let idx_chunk = (chunk as Buffer).indexOf(boundary);
+  // Process boundaries...
+}
+```
+
+```typescript Subarray usage
+let current = buffer.subarray(0, idx_boundary);
+let next = buffer.subarray(idx_boundary + len_boundary);
+```
+</CodeGroup>
+
+<Note>
+The implementation uses `Buffer.subarray()` instead of `slice()` for zero-copy operations, improving performance.
+</Note>
+
+## Type safety
+
+Provide a generic type parameter for type-safe parsing:
+
+```typescript
+interface Message {
+  id: string;
+  content: string;
+}
+
+const parts = await meros<Message>(response);
+
+for await (const part of parts) {
+  if (part.json) {
+    // part.body is typed as Message
+    console.log(part.body.id, part.body.content);
+  } else {
+    // part.body is typed as Buffer
+    const text = part.body.toString();
+  }
+}
+```
+
+## Performance characteristics
+
+Benchmark results (from the project repository with Node v18.0.0):
+
+```
+Node
+✔ meros        ~ 1,271,218 ops/sec ± 0.84%
+✘ it-multipart ~   700,039 ops/sec ± 0.72%
+```
+
+<Note>
+The Node.js implementation is approximately 82% faster than alternative libraries.
+</Note>
+
+## Complete server example
+
+Here's how to create a Node.js server that streams multipart responses:
+
+```typescript server.ts
+import type { ServerResponse } from 'node:http';
+import { createServer } from 'node:http';
+import * as Piecemeal from 'piecemeal/node';
+
+async function* alphabet() {
+  for (let letter = 65; letter <= 90; letter++) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    yield { letter: String.fromCharCode(letter) };
+  }
+}
+
+const serve_data = async (res: ServerResponse) => {
+  const stream = Piecemeal.stream(alphabet());
+  await stream.pipe(res);
+};
+
+createServer((req, res) => {
+  if (req.method !== 'GET') {
+    res.statusCode = 404;
+    res.end('Not found');
+    return;
+  }
+
+  if (req.url === '/data') {
+    return void serve_data(res);
+  }
+
+  res.statusCode = 404;
+  res.end('Not found');
+}).listen(8080);
+```
+
+## Error handling
+
+<Warning>
+Always verify the response type before iterating:
+</Warning>
+
+```typescript
+const result = await meros(response);
+
+if (!(result instanceof IncomingMessage)) {
+  // Safe to iterate - this is multipart
+  for await (const part of result) {
+    console.log(part.body);
+  }
+} else {
+  // Not multipart - handle as regular response
+  let data = '';
+  result.on('data', chunk => data += chunk);
+  result.on('end', () => console.log(data));
+}
+```

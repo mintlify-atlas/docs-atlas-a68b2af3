@@ -1,0 +1,250 @@
+---
+title: GraphQL integration
+description: Use Meros to handle GraphQL @defer and @stream directives for incremental data delivery
+---
+
+Meros was designed to be the transport layer for GraphQL's `@defer` and `@stream` directives, enabling incremental data delivery for improved perceived performance.
+
+## Why use Meros with GraphQL?
+
+GraphQL's [`@defer` and `@stream` directives](https://foundation.graphql.org/news/2020/12/08/improving-latency-with-defer-and-stream-directives/) allow servers to send query results incrementally using multipart responses. This reduces time-to-first-byte and improves user experience by showing critical data immediately while loading less important data progressively.
+
+<Note>
+  Meros handles the multipart transport protocol so you can focus on your GraphQL implementation.
+</Note>
+
+## Understanding @defer and @stream
+
+<Tabs>
+  <Tab title="@defer">
+    The `@defer` directive tells the server to send parts of a query later, prioritizing critical data:
+
+    ```graphql
+    query {
+      user {
+        id
+        name
+        ... on User @defer {
+          posts {
+            title
+            content
+          }
+        }
+      }
+    }
+    ```
+
+    The server immediately returns `id` and `name`, then sends the `posts` data as a separate part when ready.
+  </Tab>
+
+  <Tab title="@stream">
+    The `@stream` directive streams list items incrementally instead of waiting for the entire list:
+
+    ```graphql
+    query {
+      posts @stream(initialCount: 5) {
+        id
+        title
+        content
+      }
+    }
+    ```
+
+    The server sends the first 5 posts immediately, then streams remaining posts one by one (or in batches).
+  </Tab>
+</Tabs>
+
+## Consuming deferred/streamed responses
+
+<Steps>
+  <Step title="Execute your GraphQL query">
+    Send a query with `@defer` or `@stream` directives to your GraphQL endpoint:
+
+    ```ts
+    const query = `
+      query {
+        user(id: "123") {
+          id
+          name
+          ... @defer {
+            posts {
+              title
+              content
+            }
+          }
+        }
+      }
+    `;
+
+    const response = await fetch('/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    ```
+  </Step>
+
+  <Step title="Process parts with Meros">
+    Use Meros to consume the multipart response:
+
+    ```ts
+    import { meros } from 'meros';
+
+    const parts = await meros(response);
+
+    for await (const part of parts) {
+      if (part.json) {
+        // Each part contains a GraphQL response
+        const { data, path, errors } = part.body;
+        
+        // Update your store/cache with the new data
+        updateCache(path, data);
+      }
+    }
+    ```
+
+    <Note>
+      GraphQL multipart responses follow a specific format with `data`, `path`, and optional `errors` fields.
+    </Note>
+  </Step>
+
+  <Step title="Optimize with multiple mode">
+    Use `multiple: true` to process all available parts in a chunk synchronously:
+
+    ```ts
+    const chunks = await meros(response, { multiple: true });
+
+    for await (const parts of chunks) {
+      // Process multiple parts at once
+      for (const part of parts) {
+        const { data, path } = part.body;
+        updateCache(path, data);
+      }
+      
+      // Commit all updates to your store in one batch
+      commitUpdates();
+    }
+    ```
+
+    <Tip>
+      This prevents multiple re-renders by batching updates instead of processing parts one at a time.
+    </Tip>
+  </Step>
+</Steps>
+
+## Integration with GraphQL clients
+
+Meros works seamlessly with popular GraphQL clients:
+
+<CodeGroup>
+  ```ts Relay
+  import { meros } from 'meros';
+  import { Environment, Network, RecordSource, Store } from 'relay-runtime';
+
+  const fetchQuery = async (operation, variables) => {
+    const response = await fetch('/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: operation.text, variables }),
+    });
+
+    const parts = await meros(response);
+    return parts;
+  };
+
+  const environment = new Environment({
+    network: Network.create(fetchQuery),
+    store: new Store(new RecordSource()),
+  });
+  ```
+
+  ```ts Apollo Client
+  import { meros } from 'meros';
+  import { ApolloClient, InMemoryCache, HttpLink } from '@apollo/client';
+
+  const link = new HttpLink({
+    uri: '/graphql',
+    fetch: async (uri, options) => {
+      const response = await fetch(uri, options);
+      return meros(response);
+    },
+  });
+
+  const client = new ApolloClient({
+    link,
+    cache: new InMemoryCache(),
+  });
+  ```
+
+  ```ts urql
+  import { meros } from 'meros';
+  import { createClient, fetchExchange } from 'urql';
+
+  const client = createClient({
+    url: '/graphql',
+    fetch: async (uri, options) => {
+      const response = await fetch(uri, options);
+      return meros(response);
+    },
+    exchanges: [fetchExchange],
+  });
+  ```
+</CodeGroup>
+
+## Performance optimization
+
+When working with GraphQL and Meros, consider these optimizations:
+
+### Use multiple mode for batching
+
+The `multiple: true` option allows you to commit multiple parts to your store synchronously, reducing the number of re-renders:
+
+```ts
+const chunks = await meros(response, { multiple: true });
+
+for await (const parts of chunks) {
+  // Aggregate all parts before committing
+  const updates = parts.map(part => ({ path: part.body.path, data: part.body.data }));
+  
+  // Single commit instead of multiple
+  store.commit(updates);
+}
+```
+
+### Prioritize critical data
+
+Use `@defer` strategically to show important content first:
+
+```graphql
+query {
+  # Critical: shown immediately
+  user {
+    id
+    name
+    avatar
+  }
+  
+  # Deferred: shown when ready
+  ... @defer {
+    recommendations {
+      id
+      title
+    }
+  }
+}
+```
+
+<Tip>
+  Meros is highly performant, processing over 1.2 million operations per second in Node and 800k ops/sec in browsers.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Basic usage" icon="play" href="/examples/basic-usage">
+    Learn the fundamentals of Meros
+  </Card>
+  <Card title="RxJS integration" icon="arrows-spin" href="/examples/rxjs-integration">
+    Use Meros with reactive streams
+  </Card>
+</CardGroup>

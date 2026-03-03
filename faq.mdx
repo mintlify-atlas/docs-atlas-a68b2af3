@@ -1,0 +1,347 @@
+---
+title: FAQ
+description: Frequently asked questions about Meros
+---
+
+Common questions and answers about using Meros for multipart response parsing.
+
+## General questions
+
+<AccordionGroup>
+  <Accordion title="What does 'meros' mean?">
+    The name *meros* comes from Ancient Greek μέρος (méros), meaning "part". It reflects the library's purpose of parsing multipart responses into individual parts.
+  </Accordion>
+
+  <Accordion title="What is Meros used for?">
+    Meros is a utility for reading multipart responses, commonly used for:
+    
+    - GraphQL `@defer` and `@stream` directives
+    - Streaming responses from servers
+    - File upload progress tracking
+    - Any scenario where data is sent in multiple parts over HTTP
+    
+    It's particularly popular in GraphQL applications that use deferred queries to improve perceived performance.
+  </Accordion>
+
+  <Accordion title="Does Meros have any dependencies?">
+    No! Meros has zero runtime dependencies. The minified browser build is only ~642 bytes, making it extremely lightweight.
+  </Accordion>
+
+  <Accordion title="Is Meros production-ready?">
+    Yes. Meros is stable, well-tested, and used in production applications. It has:
+    
+    - Comprehensive test suite
+    - TypeScript definitions
+    - Stable API (v1.3.2)
+    - Active maintenance
+  </Accordion>
+
+  <Accordion title="How does Meros compare to other multipart parsers?">
+    Meros is significantly faster than alternatives:
+    
+    - **81% faster** than it-multipart in Node.js
+    - **59% faster** than fetch-multipart-graphql in browsers
+    - Smaller bundle size
+    - Zero dependencies
+    - Passes all correctness tests (some competitors fail)
+    
+    See the [Performance](/performance) page for detailed benchmarks.
+  </Accordion>
+</AccordionGroup>
+
+## Compatibility questions
+
+<AccordionGroup>
+  <Accordion title="Does Meros work in browsers?">
+    Yes! Meros has dedicated browser support:
+    
+    ```ts
+    import { meros } from 'meros/browser';
+    
+    const parts = await fetch('/api').then(meros);
+    ```
+    
+    Requirements:
+    - ReadableStream support
+    - TextDecoder support
+    - Async iterator support
+    
+    All modern browsers are supported.
+  </Accordion>
+
+  <Accordion title="Does Meros work in Node.js?">
+    Yes! Meros works with Node.js 13 and higher:
+    
+    ```ts
+    import { meros } from 'meros/node';
+    import http from 'http';
+    
+    const response = await new Promise((resolve) => {
+      const request = http.get('http://example.com/api', resolve);
+      request.end();
+    });
+    
+    const parts = await meros(response);
+    ```
+  </Accordion>
+
+  <Accordion title="Can I use Meros with TypeScript?">
+    Absolutely! Meros includes TypeScript definitions and supports generics:
+    
+    ```ts
+    interface MyData {
+      id: string;
+      name: string;
+    }
+    
+    const parts = await meros<MyData>(response);
+    
+    for await (const part of parts) {
+      if (part.json) {
+        // part.body is typed as MyData
+        console.log(part.body.id);
+      }
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="Does Meros work with Deno or Bun?">
+    Yes! Use the browser import for Deno:
+    
+    ```ts
+    import { meros } from 'https://cdn.skypack.dev/meros';
+    ```
+    
+    For Bun, use the standard import (Bun supports Node.js packages):
+    
+    ```ts
+    import { meros } from 'meros';
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Usage questions
+
+<AccordionGroup>
+  <Accordion title="What happens if the response is not multipart?">
+    Meros returns the original response unchanged. This allows it to work as middleware:
+    
+    ```ts
+    const result = await meros(response);
+    
+    if (result[Symbol.asyncIterator]) {
+      // It's multipart
+      for await (const part of result) {
+        // Process parts
+      }
+    } else {
+      // It's a regular response
+      const data = await result.json();
+    }
+    ```
+    
+    See the [Troubleshooting](/troubleshooting#response-is-returned-instead-of-asyncgenerator) guide for more details.
+  </Accordion>
+
+  <Accordion title="How do I know if a part is JSON?">
+    Check the `json` property on each part:
+    
+    ```ts
+    for await (const part of parts) {
+      if (part.json) {
+        // body is a JavaScript object
+        console.log(part.body.someField);
+      } else {
+        // body is Buffer (Node) or string (browser)
+        console.log(String(part.body));
+      }
+    }
+    ```
+    
+    Meros automatically detects and parses JSON when the part has `Content-Type: application/json`.
+  </Accordion>
+
+  <Accordion title="Can I access headers from each part?">
+    Yes! Each part includes a `headers` object:
+    
+    ```ts
+    for await (const part of parts) {
+      console.log(part.headers);
+      // { 'content-type': 'application/json', ... }
+    }
+    ```
+    
+    Header names are normalized to lowercase.
+  </Accordion>
+
+  <Accordion title="What is the 'multiple' option?">
+    The `multiple` option changes the yielding behavior to return arrays of parts instead of individual parts:
+    
+    ```ts
+    const chunks = await meros(response, { multiple: true });
+    
+    for await (const parts of chunks) {
+      // parts is an array of Part objects
+      for (const part of parts) {
+        // Process synchronously
+      }
+    }
+    ```
+    
+    This is useful for batch operations like updating a GraphQL store, where you want to commit all parts from a chunk at once.
+  </Accordion>
+
+  <Accordion title="Does Meros handle the preamble and epilogue?">
+    Yes! Meros correctly ignores:
+    
+    - **Preamble**: Content before the first boundary
+    - **Epilogue**: Content after the final boundary
+    
+    These are not yielded as parts, per the multipart specification.
+  </Accordion>
+
+  <Accordion title="Can I use Meros with RxJS?">
+    Yes! Meros works great with RxJS:
+    
+    ```ts
+    import { from } from 'rxjs';
+    import { meros } from 'meros';
+    
+    const parts = await fetch('/api').then(meros);
+    
+    from(parts).subscribe((part) => {
+      console.log(part.body);
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Can I use Meros with Relay?">
+    Yes! Meros is designed to work with GraphQL clients like Relay that support `@defer` and `@stream`:
+    
+    ```ts
+    import { meros } from 'meros';
+    
+    const parts = await fetch('/graphql', {
+      method: 'POST',
+      body: JSON.stringify({ query: '...' })
+    }).then(meros);
+    
+    for await (const part of parts) {
+      if (part.json) {
+        // Update Relay store with incremental data
+        relayEnvironment.commitPayload(operation, part.body);
+      }
+    }
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Technical questions
+
+<AccordionGroup>
+  <Accordion title="What content types does Meros support?">
+    Meros supports any `multipart/*` content type:
+    
+    - `multipart/mixed` (most common)
+    - `multipart/form-data`
+    - Custom multipart types
+    
+    For the part bodies, Meros:
+    - Auto-parses `application/json`
+    - Returns raw data (Buffer/string) for everything else
+  </Accordion>
+
+  <Accordion title="Does Meros support nested multiparts?">
+    No. Nested multiparts (multipart content within multipart parts) are not currently supported.
+    
+    Current limitations:
+    - No `/alternative`, `/digest`, or `/parallel` subtypes
+    - No nested multipart structures
+    
+    These may be added in future versions based on demand.
+  </Accordion>
+
+  <Accordion title="How does Meros handle UTF-8?">
+    Meros correctly handles UTF-8, including multibyte characters split across chunks:
+    
+    - **Browser**: Uses `TextDecoder` with `{ stream: true }`
+    - **Node**: Uses Buffer's built-in UTF-8 handling
+    
+    Emoji, special characters, and international text work correctly.
+  </Accordion>
+
+  <Accordion title="What if the boundary is not in the Content-Type header?">
+    Meros defaults to using `-` as the boundary if none is specified. However, this will likely fail to parse correctly.
+    
+    Always ensure your server sends:
+    ```
+    Content-Type: multipart/mixed; boundary=your-boundary
+    ```
+  </Accordion>
+
+  <Accordion title="Is Meros RFC compliant?">
+    Meros aims to implement [RFC 1341](https://tools.ietf.org/html/rfc1341) (The Multipart Content-Type), though it's not yet 100% complete.
+    
+    Currently implemented:
+    - Basic multipart parsing
+    - Boundary detection
+    - Header parsing
+    - Preamble/epilogue handling
+    
+    Not yet implemented:
+    - `/alternative`, `/digest`, `/parallel` subtypes
+    - Nested multiparts
+  </Accordion>
+</AccordionGroup>
+
+## Contributing and support
+
+<AccordionGroup>
+  <Accordion title="How can I contribute to Meros?">
+    Contributions are welcome! You can:
+    
+    1. Report bugs via [GitHub Issues](https://github.com/maraisr/meros/issues)
+    2. Submit pull requests for bug fixes or features
+    3. Improve documentation
+    4. Share your use cases
+    
+    Please review the repository's contribution guidelines before submitting.
+  </Accordion>
+
+  <Accordion title="How can I support the author?">
+    Meros is free to use software. If you find it valuable, you can support the author:
+    
+    - [GitHub Sponsors](https://github.com/sponsors/maraisr)
+    - [Buy Me a Coffee](https://www.buymeacoffee.com/marais)
+    
+    Your support helps maintain the project!
+  </Accordion>
+
+  <Accordion title="What license does Meros use?">
+    Meros is licensed under the MIT License. You're free to:
+    
+    - Use it commercially
+    - Modify it
+    - Distribute it
+    - Use it privately
+    
+    Just provide attribution. See the LICENSE file for details.
+  </Accordion>
+
+  <Accordion title="Can I copy Meros code?">
+    Yes! The library is simple and easy to alter. As the author states:
+    
+    > This library is simple, a mere few hundred bytes. It's easy to copy, and easy to alter. If you do, that is fine ❤️ I'm all for the freedom of software. But please give credit where credit is due.
+    
+    Please provide attribution if you use or modify the code.
+  </Accordion>
+</AccordionGroup>
+
+## Still have questions?
+
+If your question isn't answered here:
+
+- Check the [API Reference](/api/meros) for detailed API documentation
+- Review the [Troubleshooting](/troubleshooting) guide for common issues
+- Browse the [examples](https://github.com/maraisr/meros/tree/main/examples) on GitHub
+- Search or open an issue on [GitHub](https://github.com/maraisr/meros/issues)

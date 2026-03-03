@@ -1,0 +1,147 @@
+---
+title: Multipart responses
+description: Understanding how Meros processes multipart/mixed HTTP responses according to RFC1341
+---
+
+## What are multipart responses?
+
+Multipart responses allow servers to send multiple pieces of data in a single HTTP response. Each part can have its own headers and content type, separated by boundaries defined in the `Content-Type` header.
+
+<Info>
+Meros implements the multipart/mixed content type as defined in [RFC1341](https://tools.ietf.org/html/rfc1341), making it simple to consume these responses in both browser and Node.js environments.
+</Info>
+
+## How Meros processes multipart data
+
+When you pass a response to `meros()`, it follows this workflow:
+
+### 1. Content type validation
+
+Meros first checks if the response is actually multipart:
+
+```typescript
+let ctype = response.headers.get('content-type');
+if (!ctype || !~ctype.indexOf('multipart/')) return response;
+```
+
+<Note>
+If the response is not multipart, Meros returns the original response unchanged. This makes it safe to use as a middleware in your fetch chain.
+</Note>
+
+### 2. Boundary extraction
+
+The boundary delimiter is extracted from the `Content-Type` header:
+
+```typescript
+let idx_boundary = ctype.indexOf('boundary=');
+let boundary = ctype
+  .slice(idx_boundary_len, eo_boundary > -1 ? eo_boundary : undefined)
+  .trim()
+  .replace(/"/g, '');
+```
+
+For example, from a header like `multipart/mixed; boundary="graphql"`, Meros extracts `graphql` and prepends it with `--` to match the RFC1341 format.
+
+### 3. Stream processing
+
+Meros processes the response body as a stream, reading chunks incrementally:
+
+**Browser implementation** (browser.ts:23-27):
+```typescript
+let result: ReadableStreamReadResult<Uint8Array>;
+while (!(result = await reader.read()).done) {
+  let chunk = decoder.decode(result.value, { stream: true });
+  // Process chunk...
+}
+```
+
+**Node implementation** (node.ts:21-23):
+```typescript
+for await (let chunk of stream) {
+  buffer = Buffer.concat([buffer, chunk]);
+  // Process chunk...
+}
+```
+
+<Tip>
+Meros uses an incremental buffer approach, which means it can handle large multipart responses efficiently without loading the entire response into memory at once.
+</Tip>
+
+## Part structure
+
+Each part yielded by Meros contains three properties:
+
+```typescript
+type Part<T, Fallback> =
+  | { json: false; headers: Record<string, string>; body: Fallback }
+  | { json: true; headers: Record<string, string>; body: T };
+```
+
+### Headers extraction
+
+Meros parses headers from each part using the double CRLF separator (browser.ts:45-65):
+
+```typescript
+let idx_headers = current.indexOf('\r\n\r\n') + 4;
+let arr_headers = String(current.slice(0, idx_headers)).trim().split('\r\n');
+
+let headers: Record<string, string> = {};
+for (/* ... */) {
+  tmp = tmp.split(': ');
+  headers[tmp.shift()!.toLowerCase()] = tmp.join(': ');
+}
+```
+
+### Automatic JSON parsing
+
+If a part has `Content-Type: application/json`, Meros automatically parses the body:
+
+```typescript
+tmp = headers['content-type'];
+if (tmp && !!~tmp.indexOf('application/json')) {
+  try {
+    body = JSON.parse(body) as T;
+    is_json = true;
+  } catch (_) {}
+}
+```
+
+<Warning>
+If JSON parsing fails, Meros silently falls back to returning the raw body (string for browser, Buffer for Node). Always check the `json` property to determine the body type.
+</Warning>
+
+## Preamble and epilogue handling
+
+Meros correctly handles RFC1341's preamble and epilogue sections:
+
+- **Preamble**: Content before the first boundary is skipped (browser.ts:41-44)
+- **Epilogue**: Content after the final boundary (`--boundary--`) stops iteration (browser.ts:79)
+
+```typescript
+if (!in_main) {
+  boundary = '\r\n' + boundary;
+  in_main = len_boundary += 2;
+} else {
+  // Process part
+}
+
+// Detect tail boundary
+if ('--' === next.slice(0, 2)) break outer;
+```
+
+This ensures you only receive the actual data parts, not the framing content.
+
+## Environment-specific differences
+
+While the algorithm is identical, there are key differences between environments:
+
+| Aspect | Browser | Node |
+|--------|---------|------|
+| **Body type** | `ReadableStream<Uint8Array>` | `Readable` stream |
+| **Text handling** | Uses `TextDecoder` | Uses `Buffer` |
+| **Fallback body** | `string` | `Buffer` |
+| **Response type** | `Response` object | `IncomingMessage` |
+
+<Info>
+You can import from `meros/browser` or `meros/node` explicitly, or use the main `meros` export which relies on bundler/environment detection.
+</Info>

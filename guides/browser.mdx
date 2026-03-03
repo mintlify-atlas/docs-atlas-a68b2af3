@@ -1,0 +1,182 @@
+---
+title: Browser usage
+description: Learn how to use Meros in browser environments to handle multipart responses from fetch requests
+---
+
+Meros provides a dedicated browser implementation optimized for working with the Fetch API and browser-native `Response` objects.
+
+## Installation
+
+Import the browser-specific implementation:
+
+<CodeGroup>
+```typescript NPM/Bundler
+import { meros } from 'meros/browser';
+```
+
+```typescript CDN
+import { meros } from 'https://cdn.skypack.dev/meros';
+```
+</CodeGroup>
+
+## Basic usage
+
+The browser implementation works seamlessly with the Fetch API:
+
+```typescript
+const parts = await fetch('/api').then(meros);
+
+for await (const part of parts) {
+  // Do something with this part
+}
+```
+
+## Real-world example
+
+Here's a complete example showing how to render streaming data to the DOM:
+
+```typescript client.ts
+import { meros } from 'meros';
+
+async function run() {
+  const app = document.querySelector('#app');
+
+  const parts = await fetch('/data').then((r) =>
+    meros<{ letter: string }>(r),
+  );
+
+  for await (let part of parts) {
+    const el = document.createElement('div');
+    el.innerText = part.body.letter;
+    app.appendChild(el);
+  }
+}
+
+if (document.readyState !== 'complete') run();
+else window.addEventListener('load', run);
+```
+
+## Response handling
+
+The browser implementation validates the response before processing:
+
+<Steps>
+  <Step title="Check response status">
+    Verifies `response.ok` is true (status 200-299)
+  </Step>
+  
+  <Step title="Verify response body">
+    Ensures the response has a body and it hasn't been consumed (`!response.bodyUsed`)
+  </Step>
+  
+  <Step title="Check content type">
+    Looks for `multipart/` in the `content-type` header
+  </Step>
+  
+  <Step title="Return appropriate type">
+    Returns an `AsyncGenerator` for multipart responses, or the original `Response` otherwise
+  </Step>
+</Steps>
+
+<Note>
+If the response is not multipart, Meros returns the original `Response` object unchanged, making it safe to use as middleware.
+</Note>
+
+## Working with parts
+
+Each part yielded from the async generator provides:
+
+```typescript
+interface Part<T, string> {
+  json: boolean;        // true if body is parsed JSON
+  headers: Record<string, string>;  // Part-specific headers
+  body: T | string;     // Parsed object or string
+}
+```
+
+### JSON parts
+
+When the part has `content-type: application/json`, Meros automatically parses it:
+
+```typescript
+for await (const part of parts) {
+  if (part.json) {
+    // TypeScript knows body is type T
+    console.log(part.body.letter);
+  } else {
+    // body is a string
+    console.log(part.body);
+  }
+}
+```
+
+## Integration with libraries
+
+Meros works seamlessly with reactive libraries:
+
+<Tabs>
+  <Tab title="RxJS">
+    ```typescript
+    import { from } from 'rxjs';
+    import { meros } from 'meros/browser';
+
+    const parts = await fetch('/api').then(meros);
+
+    from(parts).subscribe((part) => {
+      // Handle each part reactively
+      console.log(part.body);
+    });
+    ```
+  </Tab>
+  
+  <Tab title="Async Iterator">
+    ```typescript
+    const parts = await fetch('/api').then(meros);
+
+    for await (const part of parts) {
+      // Simple async iteration
+      console.log(part.body);
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Performance characteristics
+
+<Note>
+The browser implementation uses `TextDecoder` for efficient UTF-8 decoding and processes chunks as they arrive via `ReadableStream`.
+</Note>
+
+Benchmark results (from the project repository):
+
+```
+Browser
+✔ meros                   ~ 800,941 ops/sec ± 1.06%
+✘ fetch-multipart-graphql ~ 502,175 ops/sec ± 0.75%
+```
+
+## Type safety
+
+Provide a generic type parameter for type-safe parsing:
+
+```typescript
+interface Message {
+  id: string;
+  content: string;
+}
+
+const parts = await fetch('/messages').then((r) => 
+  meros<Message>(r)
+);
+
+for await (const part of parts) {
+  if (part.json) {
+    // part.body is typed as Message
+    console.log(part.body.id, part.body.content);
+  }
+}
+```
+
+<Warning>
+The browser's `ReadableStream` will be consumed during processing. Ensure you don't need to read the response body elsewhere.
+</Warning>

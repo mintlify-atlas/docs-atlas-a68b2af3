@@ -1,0 +1,186 @@
+---
+title: meros()
+description: Parse multipart responses into async generators
+---
+
+The `meros()` function is the main entry point for parsing multipart responses. It detects whether a response contains multipart content and returns an async generator to iterate through the parts.
+
+## Function signature
+
+### Browser
+
+```typescript
+export function meros<T = object>(
+  response: Response,
+  options: { multiple: true },
+): Promise<Response | AsyncGenerator<ReadonlyArray<Part<T, string>>>>;
+
+export function meros<T = object>(
+  response: Response,
+  options?: { multiple: false },
+): Promise<Response | AsyncGenerator<Part<T, string>>>;
+
+export function meros<T = object>(
+  response: Response,
+  options?: Options,
+): Promise<Response | AsyncGenerator<Part<T, string>>>;
+```
+
+### Node.js
+
+```typescript
+export function meros<T = object>(
+  response: IncomingMessage,
+  options: { multiple: true },
+): Promise<IncomingMessage | AsyncGenerator<ReadonlyArray<Part<T, Buffer>>>>;
+
+export function meros<T = object>(
+  response: IncomingMessage,
+  options?: { multiple: false },
+): Promise<IncomingMessage | AsyncGenerator<Part<T, Buffer>>>;
+
+export function meros<T = object>(
+  response: IncomingMessage,
+  options?: Options,
+): Promise<IncomingMessage | AsyncGenerator<Part<T, Buffer>>>;
+```
+
+## Parameters
+
+<ParamField path="response" type="Response | IncomingMessage" required>
+  The HTTP response object to parse. In browsers, this is a `Response` object from the Fetch API. In Node.js, this is an `IncomingMessage` from the `http` or `https` module.
+</ParamField>
+
+<ParamField path="options" type="Options">
+  Optional configuration object. See [Options](/api/options) for details.
+</ParamField>
+
+<ParamField path="options.multiple" type="boolean" default="false">
+  When `true`, yields arrays of parts for each chunk instead of individual parts. This is useful for batch processing scenarios like GraphQL subscriptions.
+</ParamField>
+
+## Return value
+
+<ResponseField name="return" type="Promise<Response | AsyncGenerator<Part>>">
+  Returns a promise that resolves to:
+  - The original `Response` or `IncomingMessage` if the content type is not multipart
+  - An `AsyncGenerator` that yields [Part](/api/part) objects if the response is multipart
+  
+  When `options.multiple` is `true`, the generator yields arrays of parts (`Part[]`) instead of individual parts.
+</ResponseField>
+
+## Usage
+
+### Basic usage
+
+```typescript
+import { meros } from 'meros';
+
+const parts = await fetch('/api').then(meros);
+
+// Iterate through each part
+for await (const part of parts) {
+  if (part.json) {
+    console.log('JSON data:', part.body);
+  } else {
+    console.log('Raw data:', part.body);
+  }
+}
+```
+
+### Browser-specific
+
+```typescript
+import { meros } from 'meros/browser';
+
+const parts = await fetch('/api').then(meros);
+```
+
+### Node.js-specific
+
+```typescript
+import http from 'http';
+import { meros } from 'meros/node';
+
+const response = await new Promise((resolve) => {
+  const request = http.get('http://example.com/api', (response) => {
+    resolve(response);
+  });
+  request.end();
+});
+
+const parts = await meros(response);
+```
+
+### Handling non-multipart responses
+
+```typescript
+import { meros } from 'meros';
+
+const response = await fetch('/api');
+const parts = await meros(response);
+
+// Check if response is actually multipart
+if (parts[Symbol.asyncIterator]) {
+  for await (const part of parts) {
+    // Process multipart data
+  }
+} else {
+  // Response was not multipart, handle as regular response
+  const data = await parts.json();
+}
+```
+
+### Multiple mode for batch processing
+
+```typescript
+const chunks = await fetch('/api').then((response) => 
+  meros(response, { multiple: true })
+);
+
+// Yields arrays of parts per chunk
+for await (const parts of chunks) {
+  for (const part of parts) {
+    // Process each part in the chunk
+  }
+}
+```
+
+### With TypeScript generics
+
+```typescript
+interface User {
+  name: string;
+  email: string;
+}
+
+const parts = await fetch('/users').then(meros<User>);
+
+for await (const part of parts) {
+  if (part.json) {
+    // part.body is typed as User
+    console.log(part.body.name);
+  }
+}
+```
+
+### With RxJS
+
+```typescript
+import { from } from 'rxjs';
+import { meros } from 'meros';
+
+const parts = await fetch('/api').then(meros);
+
+from(parts).subscribe((part) => {
+  // Handle each part as an observable stream
+});
+```
+
+## Behavior
+
+- **Content-type detection**: Meros checks the `content-type` header for `multipart/` mime types. If not found, it returns the original response unchanged.
+- **Boundary parsing**: Automatically extracts the boundary delimiter from the content-type header.
+- **JSON parsing**: When a part has `content-type: application/json`, meros automatically parses it and sets `json: true`.
+- **Streaming**: Parts are yielded as they arrive, enabling real-time processing of large responses.
+- **Preamble and epilogue**: Content before the first boundary (preamble) and after the final boundary (epilogue) is ignored and not yielded.

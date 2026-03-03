@@ -1,0 +1,133 @@
+---
+title: Introduction to Meros
+description: A fast 642B utility that makes reading multipart responses simple in both browser and Node.js environments
+---
+
+## What is Meros?
+
+Meros is a lightweight utility library that simplifies reading multipart responses in both browser and Node.js environments. At just 642 bytes, it provides a seamless API for consuming multipart/mixed responses through async generators.
+
+The name _meros_ comes from Ancient Greek μέρος (méros), meaning "part".
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick installation"
+    icon="download"
+    href="/installation"
+  >
+    Install Meros via npm, pnpm, or yarn in seconds
+  </Card>
+  <Card
+    title="Get started"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Start reading multipart responses in minutes
+  </Card>
+  <Card
+    title="API reference"
+    icon="code"
+    href="/api/meros"
+  >
+    Explore the complete API documentation
+  </Card>
+  <Card
+    title="Examples"
+    icon="lightbulb"
+    href="/examples/basic-usage"
+  >
+    Learn from real-world usage examples
+  </Card>
+</CardGroup>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Zero dependencies" icon="feather">
+    No external dependencies means a smaller bundle size and faster installation
+  </Card>
+  <Card title="Universal support" icon="globe">
+    Works seamlessly in both browser and Node.js environments
+  </Card>
+  <Card title="High performance" icon="bolt">
+    Outperforms alternatives by up to 1.8x in benchmarks
+  </Card>
+  <Card title="Type safe" icon="shield">
+    Full TypeScript support with generic types for response bodies
+  </Card>
+  <Card title="Automatic JSON parsing" icon="brackets-curly">
+    Automatically detects and parses JSON content-type parts
+  </Card>
+  <Card title="Framework agnostic" icon="puzzle-piece">
+    Integrates with any framework - works with Relay, RxJS, and more
+  </Card>
+</CardGroup>
+
+## Why Meros?
+
+Multipart responses are commonly used for streaming data, particularly with GraphQL `@defer` and `@stream` directives. However, parsing these responses manually can be error-prone and complex. Meros handles all the complexity for you:
+
+- **Automatic boundary detection**: Parses the boundary from content-type headers
+- **Stream processing**: Efficiently processes chunks as they arrive
+- **Smart parsing**: Automatically parses JSON when detected, falls back to raw strings/buffers
+- **Preamble/epilogue handling**: Correctly ignores multipart preamble and epilogue sections
+- **Multiple modes**: Support for both single-part and multi-part yielding strategies
+
+<Note>
+  Meros implements the [RFC1341](https://tools.ietf.org/html/rfc1341) multipart standard, though some advanced features like nested multiparts and alternative/digest/parallel subtypes are not yet supported.
+</Note>
+
+## How it works
+
+Meros takes a response object and returns either:
+- The original response (if it's not multipart)
+- An async generator that yields parsed parts (if it's multipart/mixed)
+
+```typescript
+const parts = await fetch('/api').then(meros);
+
+for await (const part of parts) {
+  console.log(part.body); // Automatically parsed JSON or raw string
+  console.log(part.headers); // Part-specific headers
+  console.log(part.json); // true if body is parsed JSON
+}
+```
+
+Each part contains:
+- `body`: The parsed content (JSON object or string/Buffer)
+- `headers`: Key-value pairs of all headers from that part
+- `json`: Boolean indicating whether the body was parsed as JSON
+
+<Tip>
+  Meros is perfect for implementing GraphQL subscriptions with `@defer` and `@stream` directives, allowing your application to receive incremental data as it becomes available.
+</Tip>
+
+## Use cases
+
+- **GraphQL streaming**: Handle `@defer` and `@stream` directive responses
+- **Progressive data loading**: Display data as it arrives rather than waiting for complete responses
+- **File uploads**: Process multipart form data streams
+- **Real-time updates**: Stream server-sent data chunks to the client
+- **Incremental rendering**: Render UI components as their data becomes available
+
+## Next steps
+
+<Steps>
+  <Step title="Install Meros">
+    Add Meros to your project using your preferred package manager
+    
+    [Go to installation →](/installation)
+  </Step>
+  
+  <Step title="Try the quickstart">
+    Follow our quickstart guide to read your first multipart response
+    
+    [Go to quickstart →](/quickstart)
+  </Step>
+  
+  <Step title="Explore the API">
+    Learn about all available options and types
+    
+    [Go to API reference →](/api/meros)
+  </Step>
+</Steps>

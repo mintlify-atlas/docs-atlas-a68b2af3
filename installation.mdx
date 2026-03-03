@@ -1,0 +1,194 @@
+---
+title: Installation
+description: Install Meros in your browser or Node.js project using npm, pnpm, yarn, or CDN
+---
+
+## Package managers
+
+Meros is available on npm and can be installed using your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install meros
+```
+
+```bash pnpm
+pnpm add meros
+```
+
+```bash yarn
+yarn add meros
+```
+
+</CodeGroup>
+
+## Requirements
+
+<Note>
+  **Node.js version**: Meros requires Node.js version 13 or higher when used in Node.js environments.
+</Note>
+
+Meros has:
+- **Zero dependencies** - No additional packages required
+- **Universal support** - Works in both browser and Node.js
+- **TypeScript types** - Included out of the box
+- **Tiny size** - Only 642 bytes gzipped
+
+## TypeScript support
+
+Meros is written in TypeScript and includes type definitions automatically. If you're using Node.js, you'll want to install the Node.js type definitions:
+
+```bash
+npm install --save-dev @types/node
+```
+
+<Note>
+  The `@types/node` package is marked as an optional peer dependency, so you only need it if you're using Meros in a Node.js environment.
+</Note>
+
+## Import paths
+
+Meros provides multiple import paths depending on your environment:
+
+### Automatic environment detection
+
+The default import automatically detects your environment (browser or Node.js) based on your bundler configuration:
+
+```typescript
+import { meros } from 'meros';
+```
+
+<Tip>
+  This is the recommended approach as it works seamlessly with modern bundlers like Webpack, Vite, and Rollup that respect the `browser` field in package.json.
+</Tip>
+
+### Browser-specific import
+
+Explicitly import the browser version:
+
+```typescript
+import { meros } from 'meros/browser';
+```
+
+**Browser version details:**
+- Works with `Response` objects from the Fetch API
+- Returns parts with `body` as `string` type
+- Processes `ReadableStream<Uint8Array>` from response bodies
+
+### Node.js-specific import
+
+Explicitly import the Node.js version:
+
+```typescript
+import { meros } from 'meros/node';
+```
+
+**Node.js version details:**
+- Works with `IncomingMessage` from the `http` module
+- Returns parts with `body` as `Buffer` type
+- Processes Node.js `Readable` streams
+
+<CodeGroup>
+
+```typescript Browser
+import { meros } from 'meros/browser';
+
+// Works with Fetch API
+const parts = await fetch('/api').then(meros);
+
+for await (const part of parts) {
+  // part.body is a string (or parsed JSON)
+  console.log(part.body);
+}
+```
+
+```typescript Node.js
+import http from 'http';
+import { meros } from 'meros/node';
+
+const response = await new Promise((resolve) => {
+  const request = http.get('http://example.com/api', resolve);
+  request.end();
+});
+
+const parts = await meros(response);
+
+for await (const part of parts) {
+  // part.body is a Buffer (or parsed JSON)
+  console.log(part.body);
+}
+```
+
+</CodeGroup>
+
+## CDN usage
+
+You can also use Meros directly from a CDN without any build step:
+
+```typescript
+import { meros } from 'https://cdn.skypack.dev/meros';
+```
+
+<Warning>
+  CDN imports are best suited for prototyping and experimentation. For production applications, we recommend using a package manager for better caching and version control.
+</Warning>
+
+## Module formats
+
+Meros is distributed in multiple formats to support different module systems:
+
+- **ESM (ES Modules)**: `.mjs` files for modern JavaScript
+- **CommonJS**: `.js` files for Node.js and older bundlers
+- **TypeScript**: `.d.ts` type definitions included
+
+### Package exports
+
+The package.json exports field ensures your bundler gets the right version:
+
+```json
+{
+  "exports": {
+    ".": {
+      "browser": {
+        "types": "./browser/index.d.ts",
+        "import": "./browser/index.mjs",
+        "require": "./browser/index.js"
+      },
+      "node": {
+        "types": "./node/index.d.ts",
+        "import": "./node/index.mjs",
+        "require": "./node/index.js"
+      }
+    },
+    "./browser": { /* ... */ },
+    "./node": { /* ... */ }
+  }
+}
+```
+
+## Verification
+
+After installation, verify that Meros is working correctly:
+
+<CodeGroup>
+
+```typescript Browser
+import { meros } from 'meros';
+
+console.log(typeof meros); // 'function'
+```
+
+```typescript Node.js
+import { meros } from 'meros';
+
+console.log(typeof meros); // 'function'
+```
+
+</CodeGroup>
+
+## Next steps
+
+<Card title="Get started with the quickstart guide" icon="rocket" href="/quickstart">
+  Learn how to use Meros to read your first multipart response
+</Card>
