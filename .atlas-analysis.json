@@ -1,0 +1,81 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "Meros",
+  "projectDescription": "A fast 642B utility that makes reading multipart responses simple",
+  "theme": "palm",
+  "primaryColor": "#0EA5E9",
+  "lightColor": "#38BDF8",
+  "darkColor": "#0284C7",
+  "navigation": {
+    "groups": [
+      {
+        "group": "Get Started",
+        "pages": [
+          "introduction",
+          "installation",
+          "quickstart"
+        ]
+      },
+      {
+        "group": "Core Concepts",
+        "pages": [
+          "concepts/multipart-responses",
+          "concepts/streaming",
+          "concepts/graphql-defer-stream"
+        ]
+      },
+      {
+        "group": "Guides",
+        "pages": [
+          "guides/browser",
+          "guides/node",
+          "guides/multiple-mode",
+          "guides/error-handling"
+        ]
+      },
+      {
+        "group": "API Reference",
+        "pages": [
+          "api/meros",
+          "api/options",
+          "api/part"
+        ]
+      },
+      {
+        "group": "Examples",
+        "pages": [
+          "examples/basic-usage",
+          "examples/graphql-integration",
+          "examples/rxjs-integration"
+        ]
+      },
+      {
+        "group": "Additional Resources",
+        "pages": [
+          "performance",
+          "troubleshooting",
+          "migration",
+          "faq"
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Zero dependencies",
+    "Tiny bundle size (642B)",
+    "Browser and Node.js compatible",
+    "Automatic JSON parsing",
+    "Async generator API",
+    "GraphQL @defer/@stream support",
+    "High performance streaming"
+  ],
+  "publicApiSurface": [
+    "meros(response, options?)",
+    "meros/browser",
+    "meros/node",
+    "Options.multiple",
+    "Part.json",
+    "Part.headers",
+    "Part.body"
+  ]
+}
